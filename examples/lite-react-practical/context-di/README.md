@@ -53,6 +53,44 @@ lets a nested provider narrow the injected function rather than reuse the parent
 | `policy.test.ts` | Node test: inject, deep-read no-drill, narrowing, substitution, missing-required |
 | `view.tsx` | React component consuming the injected policy |
 | `view.browser.test.tsx` | Browser test: provider injects → renders decisions; nested provider narrows |
+| `main.tsx` | Composition root — what the FE declares to wire the injection |
+| `main.browser.test.tsx` | Browser test: mount renders; missing root errors; swapping the declaration swaps behaviour |
+
+## What the FE declares
+
+The frontend declares the injection once, at the composition root. Everything below just reads it.
+
+```tsx
+export function mountPermissionsApp(
+  container: Element,
+  actor: Principal,        // the typed value the FE injects
+  policy: AuthorizePolicy  // the function the FE injects
+): MountedPermissionsApp {
+  const scope = createScope()
+  const root = createRoot(container)
+
+  root.render(
+    <ScopeProvider scope={scope}>
+      <ExecutionContextProvider tags={[principal(actor), authorize(policy)]}>
+        <PermissionList label="permissions" />
+      </ExecutionContextProvider>
+    </ScopeProvider>
+  )
+
+  return { scope, unmount: async () => { root.unmount(); await scope.dispose() } }
+}
+```
+
+Three things, and only here:
+
+1. `createScope()` — the graph/test boundary, created once.
+2. `<ScopeProvider scope={scope}>` — exposes the scope to the tree.
+3. `<ExecutionContextProvider tags={[principal(actor), authorize(policy)]}>` — **the injection**: a typed
+   value and a fully-typed function attached to the context.
+
+Consumers (`PermissionList`) declare `tags.required(...)` and read a bound `can(action)` — they never
+receive `actor` or `policy` as props. Changing who/what is injected (per tenant, per role, read-only
+preview) means editing only this declaration; no component changes.
 
 ## Run
 
