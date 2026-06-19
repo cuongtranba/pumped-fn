@@ -33,8 +33,14 @@ without touching a line of consumer code.
 3. **Substitute through the seam (DI)** — tests inject a different policy purely through context tags.
    Same code, different decision. No mocks.
 4. **React consumer** (`view.tsx`) — `<ExecutionContextProvider tags={[principal(...), authorize(...)]}>`
-   injects; `PermissionList` reads the policy through a `tags.required` resource (`useResource`) and
-   renders allow/deny per action. A nested provider narrows the policy for its subtree.
+   injects; a `tags.required` resource binds `principal` + `authorize` into a single `can(action)` check
+   and exposes it through the context. `PermissionList` reads `can` via `useResource` and renders
+   allow/deny per action — it never touches `principal` or the raw policy, so the component holds no
+   authorization logic. A nested provider narrows the policy for its subtree.
+
+The check is **extracted into the graph, not assembled in the component**: the resource is the seam that
+binds who-is-acting to how-this-context-decides. For an *action* (not render), execute the `guard` flow
+through `ctx.exec` instead — same binding, async result.
 
 The resource is `ownership: "current"` so each provider context resolves its own instance — that is what
 lets a nested provider narrow the injected function rather than reuse the parent's.

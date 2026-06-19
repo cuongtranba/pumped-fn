@@ -4,24 +4,25 @@ import { authorize, principal, type Action } from "./policy"
 
 const actions: readonly Action[] = ["read", "write", "delete"]
 
-const policyView = resource({
-  name: "ctxdi.policyView",
+const checker = resource({
+  name: "ctxdi.checker",
   ownership: "current",
   deps: {
     principal: tags.required(principal),
     authorize: tags.required(authorize),
   },
-  factory: (_ctx, deps) => deps,
+  factory: (_ctx, { principal, authorize }) => (action: Action) =>
+    authorize(principal, action),
 })
 
 export function PermissionList({ label }: { label: string }) {
-  const { data } = useResource(policyView, { suspense: false })
-  if (!data) return null
+  const { data: can } = useResource(checker, { suspense: false })
+  if (!can) return null
 
   return (
     <ul aria-label={label}>
       {actions.map((action) => {
-        const decision = data.authorize(data.principal, action)
+        const decision = can(action)
         return (
           <li key={action}>
             {action}: {decision.allowed ? "allowed" : `denied — ${decision.reason}`}
