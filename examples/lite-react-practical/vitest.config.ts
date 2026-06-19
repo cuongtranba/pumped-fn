@@ -36,6 +36,8 @@ export default defineConfig({
         "patterns/**/main.tsx",
         "capstone/**/src/**/*.ts",
         "capstone/**/src/**/*.tsx",
+        "context-di/policy.ts",
+        "context-di/view.tsx",
       ],
       thresholds: {
         statements: 100,
