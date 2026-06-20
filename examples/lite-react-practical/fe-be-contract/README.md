@@ -127,6 +127,31 @@ import { persistDraft, usdFormat, usdViewer } from "./backend"
 
 One injection point feeds every component; each FE component reads only the tags it declares.
 
+## ⑥ Injecting through an explicit ctx — and inheriting outer contexts
+
+`ExecutionContextProvider` takes either `tags={[...]}` (it builds and manages the ctx, auto-inheriting
+the parent provider) **or** `ctx={ctx}` (you build the ctx yourself). The FE can build its own ctx,
+inject into it, and even inherit another ctx by passing `parent`:
+
+```tsx
+const outer = scope.createContext({ tags: [viewer(buyer), formatPrice(hashPrice)] })
+const inner = scope.createContext({ parent: outer, tags: [formatPrice(stars)] }) // inherit viewer, override format
+
+<ExecutionContextProvider ctx={outer}>
+  <PriceList label="outer" amounts={[5]} />   {/* Mai (USD), "#5"  */}
+</ExecutionContextProvider>
+<ExecutionContextProvider ctx={inner}>
+  <PriceList label="inner" amounts={[5]} />   {/* Mai (USD) inherited, "5★" overridden */}
+</ExecutionContextProvider>
+```
+
+`inner` never sets `viewer`; `tags.required(viewer)` walks the `parent` chain (`seekTag`) up to `outer`
+and finds it, while `formatPrice` set on `inner` shadows `outer`'s. Difference from `tags={[...]}`:
+explicit-ctx mode does **not** auto-inherit the surrounding provider or manage the ctx lifecycle — you
+pass `parent` yourself and the ctx is disposed with `scope.dispose()`. Use `tags=` for in-tree DI with
+nested narrowing; use `ctx=` when the FE builds and composes contexts outside the JSX (e.g. tests, or a
+ctx reused across mounts).
+
 ## What it proves
 
 1. **Contract is the only coupling** — the FE files and the host files share `contract.ts` and nothing
@@ -152,6 +177,7 @@ One injection point feeds every component; each FE component reads only the tags
 | `editor.browser.test.tsx` | — | Type + submit → the injected async action runs and the typed result shows |
 | `backend.test.ts` | — | The host implementations satisfy the contract types in isolation |
 | `host.browser.test.tsx` | — | `mountMain` renders; missing root errors; swapping only the impl changes output |
+| `inherit.browser.test.tsx` | — | Inject via `ctx={ctx}`; a child ctx with `parent` inherits the outer tags and overrides one |
 
 ## Run
 
