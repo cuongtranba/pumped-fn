@@ -41,6 +41,9 @@ export default defineConfig({
         "context-di/main.tsx",
         "fe-be-contract/contract.ts",
         "fe-be-contract/catalog.tsx",
+        "fe-be-contract/draft.ts",
+        "fe-be-contract/editor.tsx",
+        "fe-be-contract/backend.ts",
         "fe-be-contract/host.tsx",
       ],
       thresholds: {

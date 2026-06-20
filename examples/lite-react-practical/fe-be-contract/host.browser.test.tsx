@@ -1,7 +1,7 @@
 import { act, screen, within } from "@testing-library/react"
 import { describe, expect, test } from "vitest"
 import { mountCatalog, mountMain } from "./host"
-import type { FormatPrice, Viewer } from "./contract"
+import type { FormatPrice, SaveDraft, Viewer } from "./contract"
 
 async function lines(label: string): Promise<string[]> {
   const region = await screen.findByRole("region", { name: label })
@@ -37,9 +37,10 @@ describe("the host owns the implementation and injects it through the contract t
     document.body.appendChild(container)
     const lena: Viewer = { name: "Lena", currency: "EUR" }
     const euro: FormatPrice = (amount) => `€${amount.toFixed(2)}`
+    const noopSave: SaveDraft = async () => ({ id: "draft-0" })
     let app: ReturnType<typeof mountCatalog>
     await act(async () => {
-      app = mountCatalog(container, lena, euro, [5])
+      app = mountCatalog(container, lena, euro, noopSave, [5])
     })
 
     expect(await screen.findByText("Lena (EUR)")).toBeInTheDocument()

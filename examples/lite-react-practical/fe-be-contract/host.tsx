@@ -1,8 +1,17 @@
 import { createScope, type Lite } from "@pumped-fn/lite"
 import { ExecutionContextProvider, ScopeProvider } from "@pumped-fn/lite-react"
 import { createRoot } from "react-dom/client"
-import { formatPrice, viewer, type FormatPrice, type Viewer } from "./contract"
+import {
+  formatPrice,
+  saveDraft,
+  viewer,
+  type FormatPrice,
+  type SaveDraft,
+  type Viewer,
+} from "./contract"
+import { persistDraft, usdFormat, usdViewer } from "./backend"
 import { PriceList } from "./catalog"
+import { DraftEditor } from "./editor"
 
 export interface MountedCatalog {
   scope: Lite.Scope
@@ -13,6 +22,7 @@ export function mountCatalog(
   container: Element,
   who: Viewer,
   format: FormatPrice,
+  save: SaveDraft,
   amounts: readonly number[]
 ): MountedCatalog {
   const scope = createScope()
@@ -20,8 +30,11 @@ export function mountCatalog(
 
   root.render(
     <ScopeProvider scope={scope}>
-      <ExecutionContextProvider tags={[viewer(who), formatPrice(format)]}>
+      <ExecutionContextProvider
+        tags={[viewer(who), formatPrice(format), saveDraft(save)]}
+      >
         <PriceList label="catalog" amounts={amounts} />
+        <DraftEditor label="editor" />
       </ExecutionContextProvider>
     </ScopeProvider>
   )
@@ -39,13 +52,5 @@ export function mountMain(): MountedCatalog {
   const container = document.getElementById("root")
   if (container === null) throw new Error("root container missing")
 
-  const usd: FormatPrice = (amount) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-    }).format(amount)
-
-  return mountCatalog(container, { name: "Cuong", currency: "USD" }, usd, [
-    9.9, 19.9,
-  ])
+  return mountCatalog(container, usdViewer, usdFormat, persistDraft, [9.9, 19.9])
 }

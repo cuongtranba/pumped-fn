@@ -9,25 +9,28 @@ dependency inversion: both sides depend on the abstraction (`tag<T>`), not on ea
                  contract.ts  (tag + type)
                    ▲                    ▲
         FE imports ┘                    └─ host imports
-   FE ships <PriceList/> ───drop in───► host renders it
-        └─ both import contract.ts only; neither imports the other's implementation
+   FE ships <PriceList/> + <DraftEditor/> ──drop in──► host renders them
+        └─ both sides import contract.ts only; neither imports the other's implementation
 ```
 
 ## ① The contract — `contract.ts` (FE owns; the only shared file)
 
 ```ts
-export interface Viewer { readonly name: string; readonly currency: string } // data
-export type FormatPrice = (amount: number) => string                          // function
+export interface Viewer { readonly name: string; readonly currency: string }  // data
+export type FormatPrice = (amount: number) => string                          // function (render)
+export type SaveDraft = (text: string) => Promise<SaveResult>                 // async action (event)
+export interface SaveResult { readonly id: string }                           // typed return
 
 export const viewer = tag<Viewer>({ label: "catalog.viewer" })
 export const formatPrice = tag<FormatPrice>({ label: "catalog.formatPrice" })
+export const saveDraft = tag<SaveDraft>({ label: "catalog.saveDraft" })
 ```
 
-The FE says *"give me, in context, a `Viewer` at `viewer` and a function matching `FormatPrice` at
-`formatPrice`."* It never says how either is produced. A `tag` is a typed injection token (like
-Angular's `InjectionToken<T>`) that travels through the execution context — no prop drilling.
+The FE says *"give me, in context, a `Viewer`, a `FormatPrice`, and a `SaveDraft`."* It never says how
+any of them is produced. A `tag` is a typed injection token (like Angular's `InjectionToken<T>`) that
+travels through the execution context — no prop drilling.
 
-## ② The usage — `catalog.tsx` (FE owns; imports the contract only)
+## ② Reading data + calling a function in render — `catalog.tsx` (FE owns)
 
 ```tsx
 const capabilities = resource({
@@ -41,71 +44,114 @@ export function PriceList({ label, amounts }: { label: string; amounts: readonly
   if (!data) return null
   return (
     <section aria-label={label}>
-      <p>{data.viewer.name} ({data.viewer.currency})</p>   {/* data from the tag */}
+      <p>{data.viewer.name} ({data.viewer.currency})</p>          {/* data from the tag */}
       <ul>{amounts.map((a) => <li key={a}>{data.format(a)}</li>)}</ul>  {/* function from the tag */}
     </section>
   )
 }
 ```
 
-`tags.required(...)` is the FE *reading* the contract. The component uses `data.format` strictly by
-its signature and holds no formatting logic. The resource is `ownership: "current"` so each
-`ExecutionContextProvider` resolves its own instance — a nested provider can narrow the injection for
-its subtree.
+`data.viewer` is `Viewer` and `data.format` is `FormatPrice` — concrete types, no `any`. (`tags.required`
+returns `TagExecutor<Viewer, Viewer>`; at the call site the type is fully carried. The only `any` in the
+stack is `TagExecutor<any, any>` *inside* the lite library's dependency union — a deliberate
+type-erased dispatch slot, never surfaced to your code.)
 
-## ③ The implementation — `host.tsx` (host owns; imports the contract + drops the component in)
+## ③ Calling an injected async action on an event — `editor.tsx` + `draft.ts` (FE owns)
+
+A function travels through a tag the same way whether the FE calls it during render or on a click. For
+an action, the FE holds the function and invokes it later. The editor's state lives in the **graph**
+(a `scopedValue`), not React `useState` — feature components keep state in the graph and read it back.
+
+```ts
+// draft.ts — graph-owned state + the action that calls the injected function
+export const draft = scopedValue({
+  deps: { save: tags.required(saveDraft) },
+  initial: () => ({ text: "", saved: null }),
+  actions: (helpers, { save }) => ({
+    setText: (text: string) => helpers.patch({ text }),
+    submit: async () => helpers.patch({ saved: await save(helpers.get().text) }),
+  }),
+})
+```
 
 ```tsx
-const usd: FormatPrice = (amount) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount)
-
-root.render(
-  <ScopeProvider scope={createScope()}>
-    <ExecutionContextProvider tags={[viewer({ name: "Cuong", currency: "USD" }), formatPrice(usd)]}>
-      <PriceList label="catalog" amounts={[9.9, 19.9]} />
-    </ExecutionContextProvider>
-  </ScopeProvider>
+// editor.tsx — no useState; reads the scopedValue, calls the injected action
+const state = useScopedValue(draft, { suspense: false })
+if (state.status !== "ready") return null
+const { snapshot, actions } = state.data
+return (
+  <form aria-label={label} onSubmit={(e) => { e.preventDefault(); void actions.submit() }}>
+    <input value={snapshot.text} onChange={(e) => actions.setText(e.currentTarget.value)} />
+    <button type="submit">Save</button>
+    {snapshot.saved ? <p>saved {snapshot.saved.id}</p> : null}   {/* typed result back from the host */}
+  </form>
 )
 ```
 
-`<ExecutionContextProvider tags={[...]}>` is the host *fulfilling* the contract. The host's `usd`
-implementation is invisible to the FE — the FE only ever saw `FormatPrice`.
+The FE knows only `(text: string) => Promise<SaveResult>`. It never learns whether the host saves over
+HTTP, a queue, or a stub — and it gets a typed `SaveResult` back.
 
-## The function can cross to a real backend
+## ④ How the host implements the contract — `backend.ts` (host owns)
 
-The injected function is unconstrained beyond its signature, so the contract scales to an async
-backend call with zero change to how the FE reads it:
+Each binding is annotated with the contract type, so the **compiler proves conformance in this file** —
+no `any`, and any drift from the signature is a build error here, not a runtime surprise in the FE.
 
 ```ts
-export type SearchProducts = (q: string) => Promise<readonly Product[]>
-export const searchProducts = tag<SearchProducts>({ label: "catalog.search" })
+import type { FormatPrice, SaveDraft, Viewer } from "./contract"
+
+export const usdViewer: Viewer = { name: "Cuong", currency: "USD" }
+export const usdFormat: FormatPrice = (amount) =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(amount)
+export const persistDraft: SaveDraft = async (text) => ({ id: `draft-${text.length}` })
 ```
 
+Swap `persistDraft`'s body for `await fetch("/api/draft", { method: "POST", body: text }).then((r) =>
+r.json())` and **nothing in the FE changes** — it only ever saw `SaveDraft`.
+
+## ⑤ The composition root — `host.tsx` (host owns)
+
+Wire the implementations to the contract tags, drop the FE components in:
+
 ```tsx
-// host injects a fetch-backed implementation; the FE only knows the signature
-<ExecutionContextProvider tags={[searchProducts((q) => fetch(`/api?q=${q}`).then((r) => r.json()))]}>
+import { persistDraft, usdFormat, usdViewer } from "./backend"
+
+<ScopeProvider scope={createScope()}>
+  <ExecutionContextProvider
+    tags={[viewer(usdViewer), formatPrice(usdFormat), saveDraft(persistDraft)]}
+  >
+    <PriceList label="catalog" amounts={[9.9, 19.9]} />
+    <DraftEditor label="editor" />
+  </ExecutionContextProvider>
+</ScopeProvider>
 ```
+
+One injection point feeds every component; each FE component reads only the tags it declares.
 
 ## What it proves
 
-1. **Contract is the only coupling** — `catalog.tsx` and `host.tsx` share `contract.ts` and nothing
-   else. The FE can ship a code-generated component knowing nothing about the host's stack.
-2. **Inject data *and* behaviour** — `viewer` is a value, `formatPrice` is a function; both ride the
-   same tag mechanism.
-3. **Swap implementation, component untouched** — `host.browser.test.tsx` mounts the same `PriceList`
-   with a different injected formatter and gets different output; no FE edit.
-4. **Typechecker enforces the contract** — injecting a value that doesn't match the tag's type is a
-   compile error at the `tag(...)` call site.
+1. **Contract is the only coupling** — the FE files and the host files share `contract.ts` and nothing
+   else. The FE can ship code-generated components knowing nothing about the host's stack.
+2. **Inject data, a render function, *and* an async action** — `viewer`, `formatPrice`, `saveDraft` all
+   ride the same tag mechanism, and the action returns typed data to the FE.
+3. **Swap implementation, components untouched** — the browser tests mount the same `PriceList` /
+   `DraftEditor` with different injected implementations and get different output; no FE edit.
+4. **Typechecker enforces the contract** — `backend.ts` annotates each implementation with the contract
+   type; a mismatch is a compile error, and consumer reads are concretely typed (no `any`).
 
 ## Files
 
 | File | Owner | Role |
 |---|---|---|
-| `contract.ts` | FE | The tag + type — the integration point both sides import |
-| `catalog.tsx` | FE | `PriceList`, the component that *uses* the injected data + function |
-| `catalog.browser.test.tsx` | — | Inject fakes through the tags → the component renders; swap the formatter → output changes |
-| `host.tsx` | host | Provides the implementation and injects it; `mountMain` wires a real `Intl` formatter |
-| `host.browser.test.tsx` | — | `mountMain` renders; missing root errors; swapping only the injected implementation changes output |
+| `contract.ts` | FE | The tags + types — the integration point both sides import |
+| `catalog.tsx` | FE | `PriceList` — reads injected data + calls an injected function in render |
+| `draft.ts` | FE | Graph-owned editor state + the action that calls the injected `SaveDraft` |
+| `editor.tsx` | FE | `DraftEditor` — reads the scopedValue, invokes the injected action on submit |
+| `backend.ts` | host | Implementations annotated with the contract types — proof of conformance |
+| `host.tsx` | host | Composition root — wires the implementations to the tags, mounts the components |
+| `catalog.browser.test.tsx` | — | Inject through the tags → render; swap the formatter → output changes |
+| `editor.browser.test.tsx` | — | Type + submit → the injected async action runs and the typed result shows |
+| `backend.test.ts` | — | The host implementations satisfy the contract types in isolation |
+| `host.browser.test.tsx` | — | `mountMain` renders; missing root errors; swapping only the impl changes output |
 
 ## Run
 
