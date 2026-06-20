@@ -51,5 +51,6 @@ pnpm typecheck
 | Folder | Shows |
 |---|---|
 | [`context-di`](./context-di/README.md) | Context as DI — narrowing a typed value **and a function** (an authorization policy) parent → child, with a nested provider that narrows the policy for its subtree |
+| [`fe-be-contract`](./fe-be-contract/README.md) | The FE↔host integration seam — the FE owns the contract (tag + type), the host owns the implementation, they couple only through the tag. The host injects data **and** a function; swapping the injected implementation changes output with the FE component untouched |
 
 See [`@pumped-fn/lite` patterns](../../packages/lite/PATTERNS.md) and the backend practical examples for the shared doctrine.
